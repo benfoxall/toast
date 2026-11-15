@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "toast-tracker",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "routes": [{ "pattern": "toast.benjaminbenben.com", "custom_domain": true }],
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "toast-tracker",
+      "database_id": "5bc84349-f647-4a89-8c1c-4ea3f53a68a1"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ROOM", "class_name": "ToastRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ToastRoom"] }],
+  "vars": {
+    "MIN_SECONDS": "20"
+  }
+  // Secret (not in this file): npx wrangler secret put TOKEN
+}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Toast Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍞</text></svg>">
+<style>
+  :root { --bg:#fbf6ee; --ink:#3b2a1a; --crust:#c98a3e; --muted:#9b8670; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#1c1712; --ink:#f3e6d3; --muted:#8a7a66; } }
+  * { box-sizing:border-box }
+  body { margin:0; font-family: ui-rounded, system-ui, sans-serif; background:var(--bg); color:var(--ink);
+         display:grid; place-items:center; min-height:100vh; padding:2rem 1.25rem; }
+  main { width:min(560px,100%); text-align:center }
+  .slice { font-size:6rem; line-height:1; transition:transform .4s, filter .4s }
+  .toasting .slice { animation: pop 1.2s ease-in-out infinite; filter: drop-shadow(0 0 24px #ff8a00) }
+  @keyframes pop { 50% { transform: translateY(-10px) } }
+  .count { font-size:5rem; font-weight:800; margin:.5rem 0 0; font-variant-numeric:tabular-nums }
+  .label { color:var(--muted); margin:0 }
+  .label b { color:var(--ink) }
+  .status { font-weight:600; min-height:1.5em; color:var(--crust); margin:1rem 0 0 }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:.6rem; margin:1.5rem 0 2rem }
+  .stats div { background:color-mix(in srgb, var(--crust) 12%, transparent); border-radius:14px; padding:.8rem .4rem }
+  .stats b { display:block; font-size:1.5rem; font-variant-numeric:tabular-nums }
+  .stats span { color:var(--muted); font-size:.75rem }
+  h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); text-align:left; margin:0 0 .25rem }
+  ul { list-style:none; padding:0; text-align:left; margin:0 }
+  li { display:flex; justify-content:space-between; gap:1rem; padding:.55rem 0;
+       border-bottom:1px solid color-mix(in srgb, var(--muted) 25%, transparent) }
+  li .muted { color:var(--muted) }
+  .conn { position:fixed; top:.75rem; right:.75rem; width:.6rem; height:.6rem; border-radius:50%; background:#c0392b }
+  .conn.live { background:#27ae60 }
+</style>
+</head>
+<body>
+<span class="conn" id="conn" title="connection"></span>
+<main>
+  <div class="slice">🍞</div>
+  <p class="count" id="count">–</p>
+  <p class="label">toasts across <b id="sessions">–</b> sessions</p>
+  <p class="status" id="status"></p>
+  <section class="stats">
+    <div><b id="today">0</b><span>toasts today</span></div>
+    <div><b id="sessToday">0</b><span>sessions today</span></div>
+    <div><b id="week">0</b><span>last 7 days</span></div>
+    <div><b id="avg">–</b><span>avg toast</span></div>
+  </section>
+  <h2>Recent sessions</h2>
+  <ul id="log"></ul>
+</main>
+<script>
+// Toasts closer together than this (end of one → start of next) are one "session".
+const SESSION_GAP_MS = 15 * 60 * 1000;
+
+const $ = id => document.getElementById(id);
+const fmtDur = s => s >= 60 ? `${Math.floor(s/60)}m ${s%60}s` : `${s}s`;
+const fmtWhen = t => new Date(t).toLocaleString([], { weekday:"short", day:"numeric", month:"short", hour:"2-digit", minute:"2-digit" });
+
+function sessionsOf(toasts) {
+  const out = [];
+  for (const [start, secs] of toasts) {
+    const last = out.at(-1);
+    if (last && start - last.end <= SESSION_GAP_MS) { last.toasts.push(secs); last.end = start + secs*1000; }
+    else out.push({ start, end: start + secs*1000, toasts: [secs] });
+  }
+  return out;
+}
+
+let current = null, timer;
+function render({ toasts, current: cur }) {
+  current = cur;
+  const now = Date.now(), dayStart = new Date().setHours(0,0,0,0);
+  const sessions = sessionsOf(toasts);
+  $("count").textContent = toasts.length;
+  $("sessions").textContent = sessions.length;
+  $("today").textContent = toasts.filter(([s]) => s >= dayStart).length;
+  $("sessToday").textContent = sessions.filter(s => s.end >= dayStart).length;
+  $("week").textContent = toasts.filter(([s]) => s >= now - 7*864e5).length;
+  $("avg").textContent = toasts.length ? fmtDur(Math.round(toasts.reduce((a,[,s]) => a+s, 0) / toasts.length)) : "–";
+  $("log").innerHTML = sessions.slice(-10).reverse().map(s =>
+    `<li><span>${fmtWhen(s.start)}</span><span><b>${s.toasts.length}</b> 🍞 <span class="muted">${s.toasts.map(fmtDur).join(" · ")}</span></span></li>`
+  ).join("") || `<li class="muted">No toast yet.</li>`;
+
+  document.body.classList.toggle("toasting", !!cur);
+  clearInterval(timer);
+  const tick = () => $("status").textContent = current ? `Toasting now… ${fmtDur(Math.round((Date.now()-current)/1000))}` : "";
+  tick(); if (cur) timer = setInterval(tick, 1000);
+}
+
+// WebSocket with reconnect + keepalive
+let last;
+function connect(delay = 500) {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  let ping;
+  ws.onopen = () => { $("conn").classList.add("live"); delay = 500; ping = setInterval(() => ws.send("ping"), 30000); };
+  ws.onmessage = e => { if (e.data === "pong") return; last = JSON.parse(e.data); render(last); };
+  ws.onclose = () => {
+    $("conn").classList.remove("live"); clearInterval(ping);
+    setTimeout(() => connect(Math.min(delay * 2, 15000)), delay);
+  };
+}
+connect();
+// Re-render at midnight-ish so "today" stays right on a wall-mounted screen
+setInterval(() => last && render(last), 60000);
+</script>
+</body>
+</html>
